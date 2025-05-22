@@ -12,7 +12,73 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from models import HitterRecord, PitcherRecord
+from database import db
 
+
+def save_hitter_records(df):
+    # 기존 데이터 삭제
+    db.session.query(HitterRecord).delete()
+
+    # 데이터프레임을 DB에 저장
+    records = []
+    for _, row in df.iterrows():
+        record = HitterRecord(
+            선수명=row['선수명'],
+            팀명=row['팀명'],
+            연도=row['연도'],
+            AVG=row['AVG'],
+            G=row['G'],
+            PA=row['PA'],
+            AB=row['AB'],
+            R=row['R'],
+            H=row['H'],
+            _2B=row['2B'],
+            _3B=row['3B'],
+            HR=row['HR'],
+            TB=row['TB'],
+            RBI=row['RBI'],
+            SAC=row['SAC'],
+            SF=row['SF'],
+            OPS_predict=row['OPS_predict']
+        )
+        records.append(record)
+
+    db.session.bulk_save_objects(records)
+    db.session.commit()
+
+
+def save_pitcher_records(df):
+    db.session.query(PitcherRecord).delete()
+
+    records = []
+    for _, row in df.iterrows():
+        record = PitcherRecord(
+            선수명=row['선수명'],
+            팀명=row['팀명'],
+            연도=row['연도'],
+            ERA=row['ERA'],
+            G=row['G'],
+            W=row['W'],
+            L=row['L'],
+            SV=row['SV'],
+            HLD=row['HLD'],
+            WPCT=row['WPCT'],
+            IP=row['IP'],
+            H=row['H'],
+            HR=row['HR'],
+            BB=row['BB'],
+            HBP=row['HBP'],
+            SO=row['SO'],
+            R=row['R'],
+            ER=row['ER'],
+            WHIP=row['WHIP'],
+            WHIP_predict=row['WHIP_predict']
+        )
+        records.append(record)
+
+    db.session.bulk_save_objects(records)
+    db.session.commit()
 
 def process_hitter_data(hitter_data_2025, hitter_data_his):
     """타자 데이터 처리"""
