@@ -1,28 +1,73 @@
 from flask import Flask, request, jsonify
+from flask_apscheduler import APScheduler
 from database import db
 import crawler
 import data_processor
 import predictor
 from datetime import datetime
+from models import WinProbability, RankingPredict
+import os
+
+# 스케줄러 인스턴스 생성
+scheduler = APScheduler()
+
 
 def create_app():
     app = Flask(__name__)
 
-    # MySQL RDS 연결 정보
-    app.config['SQLALCHEMY_DATABASE_URI'] = (
+    # Flask-APScheduler 설정
+    app.config['SCHEDULER_API_ENABLED'] = True
+
+    # MySQL 연결 정보 (환경 변수 사용 권장)
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+        'DB_URI',
         'mysql+pymysql://root:dugout2025!!@dugout-dev.cn6mm486utfi.ap-northeast-2.rds.amazonaws.com:3306/dugoutDB?charset=utf8'
     )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+    # 확장 기능 초기화
     db.init_app(app)
+    scheduler.init_app(app)
+
+    # 스케줄러 작업 등록
+    scheduler.start()
 
     # 캐시 데이터 초기화
-    cached_data = {
+    app.cached_data = {
         'hitter_data': None,
         'pitcher_data': None,
         'win_probability_df': None,
         'last_update': None
     }
+
+    # 매일 00:00 KST에 실행되는 작업
+    @scheduler.task('cron', id='daily_update', hour=0, minute=0, timezone='Asia/Seoul')
+    def daily_data_update():
+        with app.app_context():  # 앱 컨텍스트 보장
+            print("🔁 자정 강제 데이터 갱신 시작...")
+            try:
+                # 데이터 수집
+                hitter_data = crawler.crawl_hitter_data()
+                pitcher_data = crawler.crawl_pitcher_data()
+                hist_hitter, hist_pitcher = crawler.load_historical_data()
+
+                # 데이터 처리
+                processed_hitter = data_processor.process_hitter_data(hitter_data, hist_hitter)
+                processed_pitcher = data_processor.process_pitcher_data(pitcher_data, hist_pitcher)
+
+                # DB 갱신
+                predictor.generate_win_probability_df(processed_hitter, processed_pitcher)
+
+                # 캐시 초기화
+                app.cached_data.update({
+                    'hitter_data': processed_hitter,
+                    'pitcher_data': processed_pitcher,
+                    'last_update': datetime.now(),
+                    'win_probability_df': predictor.get_win_probability_df(app.cached_data)
+                })
+                print("✅ 자동 갱신 완료!")
+            except Exception as e:
+                print(f"⚠️ 자동 갱신 실패: {str(e)}")
 
     # 라우트 정의
     @app.route('/')
@@ -39,7 +84,7 @@ def create_app():
         team2 = data['team2']
 
         try:
-            win_probability_df = predictor.get_win_probability_df(cached_data)
+            win_probability_df = predictor.get_win_probability_df(app.cached_data)
             valid_teams = win_probability_df.index.tolist()
 
             if team1 not in valid_teams:
@@ -66,7 +111,6 @@ def create_app():
     @app.route('/historical_data', methods=['GET'])
     def get_historical_data():
         try:
-            from models import WinProbability  # 지연 임포트
             records = WinProbability.query.all()
             result = [{
                 'team1': r.team1,
@@ -81,7 +125,6 @@ def create_app():
     @app.route('/ranking', methods=['GET'])
     def get_ranking():
         try:
-            from models import RankingPredict  # 지연 임포트
             latest_date = db.session.query(db.func.max(RankingPredict.created_date)).scalar()
             records = RankingPredict.query.filter_by(created_date=latest_date).all()
 
@@ -98,10 +141,11 @@ def create_app():
 
     return app
 
+
 # 앱 생성 및 실행
 app = create_app()
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True, host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080)
