@@ -1,4 +1,7 @@
 flask==3.0.3
+flask-sqlalchemy==3.1.1
+flask-migrate==4.0.5
+pymysql==1.1.0
 selenium==4.21.0
 beautifulsoup4==4.12.3
 pandas==2.2.2
@@ -9,4 +12,8 @@ lightgbm==4.3.0
 matplotlib==3.8.4
 seaborn==0.13.2
 requests==2.31.0
-gunicorn
+gunicorn==21.2.0
+python-dotenv==1.0.1
+sqlalchemy==2.0.29
+werkzeug==3.0.2
+jinja2==3.1.3
