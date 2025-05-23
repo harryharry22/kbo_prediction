@@ -1,63 +1,80 @@
 from flask import Flask, request, jsonify
 from flask_apscheduler import APScheduler
+from flask_sqlalchemy import SQLAlchemy
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from database import db
 import crawler
 import data_processor
 import predictor
 from datetime import datetime
-from models import WinProbability, RankingPredict
 import os
+import logging
 
-# 스케줄러 인스턴스 생성
+# 스케줄러 초기화 방식 변경
 scheduler = APScheduler()
-
 
 def create_app():
     app = Flask(__name__)
-
-    # Flask-APScheduler 설정
-    app.config['SCHEDULER_API_ENABLED'] = True
-
-    # MySQL 연결 정보 (환경 변수 사용 권장)
+    
+    # MySQL 연결 설정
     app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
         'DB_URI',
         'mysql+pymysql://root:dugout2025!!@dugout-dev.cn6mm486utfi.ap-northeast-2.rds.amazonaws.com:3306/dugoutDB?charset=utf8'
     )
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    # 스케줄러 설정 강화
+    app.config['SCHEDULER_JOBSTORES'] = {
+        'default': SQLAlchemyJobStore(
+            url=app.config['SQLALCHEMY_DATABASE_URI'],
+            engine_options={"pool_pre_ping": True}
+        )
+    }
+    app.config['SCHEDULER_TIMEZONE'] = 'Asia/Seoul'
+    app.config['SCHEDULER_API_ENABLED'] = True
 
-    # 확장 기능 초기화
+    # DB 및 스케줄러 초기화
     db.init_app(app)
     scheduler.init_app(app)
 
-    # 스케줄러 작업 등록
-    scheduler.start()
+    # 로깅 설정
+    logging.basicConfig()
+    logging.getLogger('apscheduler').setLevel(logging.DEBUG)
 
-    # 캐시 데이터 초기화
-    app.cached_data = {
-        'hitter_data': None,
-        'pitcher_data': None,
-        'win_probability_df': None,
-        'last_update': None
-    }
+    # uWSGI 호환성을 위한 시작 지점 설정
+    @app.after_server_start
+    def start_scheduler(app):
+        if not scheduler.running:
+            scheduler.start()
+            app.logger.info("✅ 스케줄러가 성공적으로 시작되었습니다")
 
-    # 매일 00:00 KST에 실행되는 작업
-    @scheduler.task('cron', id='daily_update', hour=0, minute=0, timezone='Asia/Seoul')
+    # 스케줄러 이벤트 리스너 추가
+    def job_listener(event):
+        if event.exception:
+            app.logger.error(f"⚠️ 작업 실패: {event.exception}")
+        else:
+            app.logger.info(f"✅ 작업 성공: {event.job_id}")
+
+    scheduler.add_listener(job_listener, 
+        APScheduler.EVENT_JOB_EXECUTED | APScheduler.EVENT_JOB_ERROR)
+
+    # 매일 자정 작업 등록
+    @scheduler.task('cron', id='daily_update', hour=0, minute=0, misfire_grace_time=300)
     def daily_data_update():
-        with app.app_context():  # 앱 컨텍스트 보장
-            print("🔁 자정 강제 데이터 갱신 시작...")
+        with app.app_context():
+            app.logger.info("🔁 자정 강제 데이터 갱신 시작...")
             try:
-                # 데이터 수집
-                hitter_data = crawler.crawl_hitter_data()
-                pitcher_data = crawler.crawl_pitcher_data()
+                # 크롤링 및 데이터 처리 로직
+                hitter = crawler.crawl_hitter_data()
+                pitcher = crawler.crawl_pitcher_data()
                 hist_hitter, hist_pitcher = crawler.load_historical_data()
-
-                # 데이터 처리
-                processed_hitter = data_processor.process_hitter_data(hitter_data, hist_hitter)
-                processed_pitcher = data_processor.process_pitcher_data(pitcher_data, hist_pitcher)
-
+                
+                processed_hitter = data_processor.process_hitter_data(hitter, hist_hitter)
+                processed_pitcher = data_processor.process_pitcher_data(pitcher, hist_pitcher)
+                
                 # DB 갱신
                 predictor.generate_win_probability_df(processed_hitter, processed_pitcher)
-
+                
                 # 캐시 초기화
                 app.cached_data.update({
                     'hitter_data': processed_hitter,
@@ -65,9 +82,10 @@ def create_app():
                     'last_update': datetime.now(),
                     'win_probability_df': predictor.get_win_probability_df(app.cached_data)
                 })
-                print("✅ 자동 갱신 완료!")
+                app.logger.info("✅ 자동 갱신 완료!")
             except Exception as e:
-                print(f"⚠️ 자동 갱신 실패: {str(e)}")
+                app.logger.error(f"⚠️ 자동 갱신 실패: {str(e)}")
+                raise
 
     # 라우트 정의
     @app.route('/')
