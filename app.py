@@ -68,7 +68,8 @@ def create_app():
             except Exception as e:
                 print(f"⚠️ 자동 갱신 실패: {str(e)}")
 
-    # 라우트 정의
+    # --- 여기서부터 라우트 정의 ---
+
     @app.route('/')
     def home():
         return "KBO 야구 승률 예측 API. '/predict_win_rate' 엔드포인트를 사용하세요."
@@ -137,6 +138,15 @@ def create_app():
             return jsonify(sorted(result, key=lambda x: x['rank']))
         except Exception as e:
             return jsonify({'error': str(e)}), 500
+
+    # --- force-update 엔드포인트 추가 ---
+    @app.route('/force-update', methods=['POST'])
+    def force_update():
+        try:
+            scheduler.run_job('daily_update')
+            return jsonify({"status": "Job triggered successfully"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
 
