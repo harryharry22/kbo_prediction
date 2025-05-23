@@ -1,0 +1,17 @@
+# render.yaml
+
+services:
+  - type: web
+    name: kbo-prediction-web
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      flask db upgrade
+    startCommand: gunicorn --timeout 300 --workers 1 app:app
+    plan: free  # 또는 hobby, standard 등 Render 플랜에 맞게 설정
+    envVars:
+      - key: DB_URI
+        value: mysql+pymysql://root:dugout2025!!@dugout-dev.cn6mm486utfi.ap-northeast-2.rds.amazonaws.com:3306/dugoutDB?charset=utf8
+      - key: SCHEDULER_API_ENABLED
+        value: "True"
+      # 필요시 추가 환경변수
